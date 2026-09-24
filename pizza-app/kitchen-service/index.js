@@ -1,6 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const pino = require('pino');
+const { trace, SpanStatusCode } = require('@opentelemetry/api');
 
 const logger = pino({ name: 'kitchen-service' });
 
@@ -14,6 +15,30 @@ const SLOW_KITCHEN = process.env.SLOW_KITCHEN === 'true';
 
 // Simulate async delay
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+function recordCookRejection({ orderId, pizzaType, size, statusCode, rule, reason }) {
+  logger.warn({ orderId, pizzaType, size, statusCode, rule, reason }, 'Refusing to cook');
+
+  const span = trace.getActiveSpan();
+
+  if (!span) {
+    return;
+  }
+
+  const attributes = {
+    'pizza.order.id': orderId,
+    'pizza.type': pizzaType,
+    'pizza.size': size,
+    'pizza.cook.rejected': true,
+    'pizza.cook.rejection.rule': rule,
+    'pizza.cook.rejection.reason': reason,
+    'http.response.status_code': statusCode
+  };
+
+  span.setAttributes(attributes);
+  span.addEvent('pizza.cook.rejected', attributes);
+  span.setStatus({ code: SpanStatusCode.ERROR, message: reason });
+}
 
 // Check oven temperature (simulated)
 async function checkOvenTemperature() {
@@ -49,8 +74,19 @@ app.post('/cook', async (req, res) => {
   logger.info({ orderId, pizzaType, size }, 'Starting to cook');
   
   if (pizzaType === 'Hawaiian') {
+    const reason = 'pineapple on pizza is forbidden';
+
+    recordCookRejection({
+      orderId,
+      pizzaType,
+      size,
+      statusCode: 403,
+      rule: 'forbidden-pizza-type',
+      reason
+    });
+
     return res.status(403).json({
-      error: 'pineapple on pizza is forbidden',
+      error: reason,
       orderId
     });
   }
