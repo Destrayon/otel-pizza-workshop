@@ -1,0 +1,74 @@
+# OpenTelemetry Collector configuration.
+#
+# Receives OTLP from the three Node services and from the browser, and forwards
+# it to Dash0. Credentials come from pizza-app/.env through the environment of
+# the otel-collector container -- never hardcode them here.
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+        cors:
+          allowed_origins:
+            - http://localhost:8080
+            - http://127.0.0.1:8080
+          allowed_headers:
+            - "*"
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 256
+    spike_limit_mib: 64
+
+  resourcedetection:
+    detectors: [env, system, docker]
+    timeout: 5s
+    override: false
+
+  filter/drop_healthchecks:
+    error_mode: ignore
+    traces:
+      span:
+        - attributes["url.path"] == "/health"
+        - attributes["http.route"] == "/health"
+
+  batch:
+    send_batch_size: 512
+    timeout: 5s
+
+exporters:
+  otlp/dash0:
+    endpoint: ${env:DASH0_ENDPOINT}
+    headers:
+      Authorization: Bearer ${env:DASH0_AUTH_TOKEN}
+      Dash0-Dataset: ${env:DASH0_DATASET:-default}
+
+  debug:
+    verbosity: basic
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+service:
+  extensions: [health_check]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, resourcedetection, filter/drop_healthchecks, batch]
+      exporters: [otlp/dash0, debug]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, resourcedetection, batch]
+      exporters: [otlp/dash0]
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, resourcedetection, batch]
+      exporters: [otlp/dash0, debug]
+  telemetry:
+    logs:
+      level: info

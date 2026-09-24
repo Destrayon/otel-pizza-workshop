@@ -8,25 +8,54 @@
 #
 # An `.env` anywhere else (the repo root, for example) is NOT read.
 
+x-otel-env: &otel-env
+  NODE_OPTIONS: --require @opentelemetry/auto-instrumentations-node/register
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+  OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+  OTEL_TRACES_EXPORTER: otlp
+  OTEL_METRICS_EXPORTER: otlp
+  OTEL_LOGS_EXPORTER: otlp
+  OTEL_NODE_RESOURCE_DETECTORS: env,host,os,serviceinstance,container
+  OTEL_RESOURCE_ATTRIBUTES: service.namespace=pizza-app,deployment.environment.name=${DASH0_ENVIRONMENT:-local},vcs.repository.url.full=https://github.com/Destrayon/otel-pizza-workshop
+
 services:
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.161.0
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    volumes:
+      - ./otelcol.yaml:/etc/otelcol-contrib/config.yaml:ro
+    environment:
+      - DASH0_ENDPOINT=${DASH0_ENDPOINT:?set DASH0_ENDPOINT in pizza-app/.env}
+      - DASH0_AUTH_TOKEN=${DASH0_AUTH_TOKEN:?set DASH0_AUTH_TOKEN in pizza-app/.env}
+      - DASH0_DATASET=${DASH0_DATASET:-default}
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+      - "13133:13133"
+    restart: unless-stopped
+
   order-service:
     build: ./order-service
     ports:
       - "3000:3000"
     environment:
-      - KITCHEN_SERVICE_URL=http://kitchen-service:3001
-      - DELIVERY_SERVICE_URL=http://delivery-service:3002
+      <<: *otel-env
+      OTEL_SERVICE_NAME: order-service
+      KITCHEN_SERVICE_URL: http://kitchen-service:3001
+      DELIVERY_SERVICE_URL: http://delivery-service:3002
     healthcheck:
       test:
         - CMD
-        - node
-        - -e
-        - "require('http').get('http://127.0.0.1:3000/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"
+        - sh
+        - -c
+        - "NODE_OPTIONS= node -e \"require('http').get('http://127.0.0.1:3000/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))\""
       interval: 5s
       timeout: 3s
       retries: 12
       start_period: 5s
     depends_on:
+      otel-collector:
+        condition: service_started
       kitchen-service:
         condition: service_healthy
       delivery-service:
@@ -37,39 +66,54 @@ services:
     ports:
       - "3001:3001"
     environment:
-      - SLOW_KITCHEN=${SLOW_KITCHEN:-false}
+      <<: *otel-env
+      OTEL_SERVICE_NAME: kitchen-service
+      SLOW_KITCHEN: ${SLOW_KITCHEN:-false}
     healthcheck:
       test:
         - CMD
-        - node
-        - -e
-        - "require('http').get('http://127.0.0.1:3001/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"
+        - sh
+        - -c
+        - "NODE_OPTIONS= node -e \"require('http').get('http://127.0.0.1:3001/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))\""
       interval: 5s
       timeout: 3s
       retries: 12
       start_period: 5s
+    depends_on:
+      otel-collector:
+        condition: service_started
 
   delivery-service:
     build: ./delivery-service
     ports:
       - "3002:3002"
     environment:
-      - NO_DRIVERS=${NO_DRIVERS:-false}
+      <<: *otel-env
+      OTEL_SERVICE_NAME: delivery-service
+      NO_DRIVERS: ${NO_DRIVERS:-false}
     healthcheck:
       test:
         - CMD
-        - node
-        - -e
-        - "require('http').get('http://127.0.0.1:3002/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"
+        - sh
+        - -c
+        - "NODE_OPTIONS= node -e \"require('http').get('http://127.0.0.1:3002/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))\""
       interval: 5s
       timeout: 3s
       retries: 12
       start_period: 5s
+    depends_on:
+      otel-collector:
+        condition: service_started
 
   frontend:
     build: ./frontend
     ports:
       - "8080:80"
+    environment:
+      - DASH0_WEBSITE_ENDPOINT=${DASH0_WEBSITE_ENDPOINT:-}
+      - DASH0_WEBSITE_AUTH_TOKEN=${DASH0_WEBSITE_AUTH_TOKEN:-}
+      - DASH0_DATASET=${DASH0_DATASET:-default}
+      - DASH0_ENVIRONMENT=${DASH0_ENVIRONMENT:-local}
     depends_on:
       order-service:
         condition: service_healthy
