@@ -29,8 +29,19 @@ const drivers = [
 const SIZE_RANK = {
   Small: 1,
   Medium: 2,
-  large: 3
+  Large: 3
 };
+
+const KNOWN_SIZES = Object.keys(SIZE_RANK);
+
+const driversWithUnknownBagSize = drivers.filter(d => SIZE_RANK[d.bagSize] === undefined);
+
+if (driversWithUnknownBagSize.length > 0) {
+  logger.error({
+    knownSizes: KNOWN_SIZES,
+    drivers: driversWithUnknownBagSize.map(d => ({ name: d.name, bagSize: d.bagSize }))
+  }, 'Drivers have an unrecognised bag size and can never be assigned');
+}
 
 // Find nearest available driver whose bag fits this pizza
 async function findNearestDriver(size) {
@@ -41,7 +52,14 @@ async function findNearestDriver(size) {
     return null;
   }
   
-  const eligible = drivers.filter(d => SIZE_RANK[d.bagSize] >= SIZE_RANK[size]);
+  const requiredRank = SIZE_RANK[size];
+  
+  if (requiredRank === undefined) {
+    logger.error({ size, knownSizes: KNOWN_SIZES }, 'Unrecognised pizza size');
+    return null;
+  }
+  
+  const eligible = drivers.filter(d => SIZE_RANK[d.bagSize] >= requiredRank);
   logger.info({ size, eligible: eligible.length, total: drivers.length }, 'Drivers able to carry this pizza');
   
   // Sort by distance and return closest
