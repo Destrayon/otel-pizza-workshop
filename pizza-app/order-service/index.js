@@ -78,7 +78,20 @@ app.post('/order', async (req, res) => {
     });
     
   } catch (error) {
-    logger.error({ orderId, err: error }, 'Error processing order');
+    const upstreamStatus = error.response?.status;
+    
+    if (upstreamStatus >= 400 && upstreamStatus < 500) {
+      const upstreamError = error.response.data?.error;
+      
+      logger.warn({ orderId, upstreamStatus, upstreamError }, 'Order rejected');
+      
+      return res.status(upstreamStatus).json({
+        error: upstreamError || 'Order rejected',
+        orderId
+      });
+    }
+    
+    logger.error({ orderId, upstreamStatus, err: error }, 'Error processing order');
     res.status(500).json({ 
       error: 'Failed to process order',
       orderId,
